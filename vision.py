@@ -3,8 +3,8 @@ import cv2
 import numpy as np
 import utils
 import threading
+import os
 from deepface import DeepFace
-from sklearn.metrics.pairwise import cosine_similarity
 import torch
 from ultralytics import YOLO
 import traceback
@@ -14,18 +14,143 @@ class VisionAssistant:
         try:
             self.camera_index = utils.get_setting("camera_index", 0)
             self.camera_backend = utils.get_setting("camera_backend", "AUTO")
-            self.camera_available = self.check_camera()
             self.camera_lock = threading.Lock()
 
-            # Pré-carregar modelos para reduzir o tempo de resposta
-            self.face_recognition_model = 'Facenet'  # Pode testar com 'VGG-Face' ou 'OpenFace'
-            self.face_analysis_models = {}  # Cache para modelos de análise facial
+            # Abrir a câmera uma vez
+            backend = self.get_backend()
+            self.cap = cv2.VideoCapture(self.camera_index, backend)
+            self.camera_available = self.cap.isOpened()
+            if not self.camera_available:
+                print("Não foi possível abrir a câmera.")
 
             if self.camera_available:
                 # Inicialize o modelo de detecção de objetos usando YOLO
                 try:
                     self.device = "cuda" if torch.cuda.is_available() else "cpu"
-                    self.object_detector = YOLO('yolov8n.pt')
+                    # Atualizado para usar o modelo mais preciso
+                    self.object_detector = YOLO('yolov8s.pt')
+
+                    # Dicionário para tradução dos objetos
+                    self.object_translation = {
+                        'person': 'pessoa',
+                        'bicycle': 'bicicleta',
+                        'car': 'carro',
+                        'motorcycle': 'moto',
+                        'airplane': 'avião',
+                        'bus': 'ônibus',
+                        'train': 'trem',
+                        'truck': 'caminhão',
+                        'boat': 'barco',
+                        'traffic light': 'semáforo',
+                        'fire hydrant': 'hidrante',
+                        'stop sign': 'placa de pare',
+                        'parking meter': 'parquímetro',
+                        'bench': 'banco',
+                        'bird': 'pássaro',
+                        'cat': 'gato',
+                        'dog': 'cachorro',
+                        'horse': 'cavalo',
+                        'sheep': 'ovelha',
+                        'cow': 'vaca',
+                        'elephant': 'elefante',
+                        'bear': 'urso',
+                        'zebra': 'zebra',
+                        'giraffe': 'girafa',
+                        'backpack': 'mochila',
+                        'umbrella': 'guarda-chuva',
+                        'handbag': 'bolsa',
+                        'tie': 'gravata',
+                        'suitcase': 'mala',
+                        'frisbee': 'frisbee',
+                        'skis': 'esquis',
+                        'snowboard': 'snowboard',
+                        'sports ball': 'bola',
+                        'kite': 'pipa',
+                        'baseball bat': 'taco de beisebol',
+                        'baseball glove': 'luva de beisebol',
+                        'skateboard': 'skate',
+                        'surfboard': 'prancha de surf',
+                        'tennis racket': 'raquete de tênis',
+                        'bottle': 'garrafa',
+                        'wine glass': 'taça',
+                        'cup': 'copo',
+                        'fork': 'garfo',
+                        'knife': 'faca',
+                        'spoon': 'colher',
+                        'bowl': 'tigela',
+                        'banana': 'banana',
+                        'apple': 'maçã',
+                        'sandwich': 'sanduíche',
+                        'orange': 'laranja',
+                        'broccoli': 'brócolis',
+                        'carrot': 'cenoura',
+                        'hot dog': 'cachorro-quente',
+                        'pizza': 'pizza',
+                        'donut': 'rosquinha',
+                        'cake': 'bolo',
+                        'chair': 'cadeira',
+                        'couch': 'sofá',
+                        'potted plant': 'planta em vaso',
+                        'bed': 'cama',
+                        'dining table': 'mesa de jantar',
+                        'toilet': 'vaso sanitário',
+                        'tv': 'televisão',
+                        'laptop': 'laptop',
+                        'mouse': 'mouse',
+                        'remote': 'controle remoto',
+                        'keyboard': 'teclado',
+                        'cell phone': 'celular',
+                        'microwave': 'micro-ondas',
+                        'oven': 'forno',
+                        'toaster': 'torradeira',
+                        'sink': 'pia',
+                        'refrigerator': 'geladeira',
+                        'book': 'livro',
+                        'clock': 'relógio',
+                        'vase': 'vaso',
+                        'scissors': 'tesoura',
+                        'teddy bear': 'ursinho de pelúcia',
+                        'hair drier': 'secador de cabelo',
+                        'toothbrush': 'escova de dentes',
+                        # Objetos comuns na escola
+                        'pen': 'caneta',
+                        'pencil': 'lápis',
+                        'notebook': 'caderno',
+                        'lighter': 'isqueiro',
+                        'mug': 'caneca',
+                        'plate': 'prato',
+                        'spoon': 'colher',
+                        'fork': 'garfo',
+                        'chair': 'cadeira',
+                    }
+
+                    # Dicionário para tradução das emoções
+                    self.emotion_translation = {
+                        'angry': 'raiva',
+                        'disgust': 'desgosto',
+                        'fear': 'medo',
+                        'happy': 'feliz',
+                        'sad': 'triste',
+                        'surprise': 'surpreso',
+                        'neutral': 'neutro'
+                    }
+
+                    # Dicionário para tradução de gênero
+                    self.gender_translation = {
+                        'Man': 'homem',
+                        'Woman': 'mulher'
+                    }
+
+                    # Dicionário para tradução de etnia/raça
+                    self.race_translation = {
+                        'asian': 'asiático',
+                        'indian': 'indiano',
+                        'black': 'negro',
+                        'white': 'branco',
+                        'middle eastern': 'árabe',
+                        'latino hispanic': 'hispânico'
+                    }
+
                 except Exception as e:
                     print(f"Erro ao carregar o modelo de detecção de objetos: {e}")
                     traceback.print_exc()
@@ -36,9 +161,14 @@ class VisionAssistant:
             print(f"Erro na inicialização do VisionAssistant: {e}")
             traceback.print_exc()
 
+    def __del__(self):
+        # Liberar a câmera quando o objeto for destruído
+        if hasattr(self, 'cap') and self.cap.isOpened():
+            self.cap.release()
+
     def get_backend(self):
         backend_options = {
-            "AUTO": cv2.CAP_ANY,
+            "AUTO": cv2.CAP_DSHOW if os.name == 'nt' else cv2.CAP_ANY,
             "CAP_DSHOW": cv2.CAP_DSHOW,
             "CAP_MSMF": cv2.CAP_MSMF,
             "CAP_V4L2": cv2.CAP_V4L2
@@ -46,103 +176,21 @@ class VisionAssistant:
         backend = backend_options.get(self.camera_backend, cv2.CAP_ANY)
         return backend
 
-    def check_camera(self):
-        backend = self.get_backend()
-        cap = cv2.VideoCapture(self.camera_index, backend)
-        result = cap.isOpened()
-        cap.release()
-        return result
-
     def capture_image(self):
         with self.camera_lock:
-            backend = self.get_backend()
-            for _ in range(3):
-                cap = cv2.VideoCapture(self.camera_index, backend)
-                if not cap.isOpened():
-                    cap.release()
-                    continue
-                # Definir resolução da câmera
-                cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-                cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-                ret, frame = cap.read()
-                cap.release()
-                if ret and frame is not None and np.sum(frame) > 0:
-                    # Verifique se a imagem tem 3 canais
-                    if len(frame.shape) == 3 and frame.shape[2] == 3:
-                        return frame
-                    else:
-                        print("Imagem capturada não está em formato RGB.")
-                else:
-                    continue
-            print("Não foi possível capturar a imagem após múltiplas tentativas")
-            return None
-
-    def encode_face(self):
-        if not self.camera_available:
-            print("Câmera não disponível.")
-            return None
-
-        frame = self.capture_image()
-        if frame is None:
-            print("Imagem capturada é inválida.")
-            return None
-
-        try:
-            # Converter a imagem para RGB
-            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            # Usando o DeepFace para representar a face com enforce_detection=False
-            result = DeepFace.represent(frame_rgb, model_name=self.face_recognition_model, detector_backend='mtcnn', enforce_detection=False)
-            if result and len(result) > 0:
-                return result[0]['embedding']  # Retorna a representação da primeira face detectada
+            if not self.cap.isOpened():
+                print("Câmera não está aberta.")
+                return None
+            ret, frame = self.cap.read()
+            if not ret or frame is None:
+                print("Erro ao capturar a imagem da câmera.")
+                return None
+            # Verifique se a imagem tem 3 canais
+            if len(frame.shape) == 3 and frame.shape[2] == 3:
+                return frame
             else:
-                print("Nenhum rosto detectado.")
-        except Exception as e:
-            print(f"Erro ao calcular as codificações faciais: {e}")
-            traceback.print_exc()
-        return None
-
-    def recognize_face(self, known_encodings):
-        if not self.camera_available:
-            print("Câmera não disponível.")
-            return None
-
-        frame = self.capture_image()
-        if frame is None:
-            print("Imagem capturada é inválida.")
-            return None
-
-        try:
-            # Converter a imagem para RGB
-            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            # Representa a face atual com enforce_detection=False
-            result = DeepFace.represent(frame_rgb, model_name=self.face_recognition_model, detector_backend='mtcnn', enforce_detection=False)
-            if result and len(result) > 0:
-                captured_embedding = result[0]['embedding']
-
-                # Comparar com as codificações conhecidas
-                captured_embedding = np.array(captured_embedding).reshape(1, -1)
-                for idx, known_encoding in enumerate(known_encodings):
-                    known_embedding = np.array(known_encoding).reshape(1, -1)
-                    similarity = cosine_similarity(captured_embedding, known_embedding)[0][0]
-                    if similarity >= 0.7:  # Ajuste o limiar conforme necessário
-                        return idx
-            else:
-                print("Nenhum rosto detectado.")
-        except Exception as e:
-            print(f"Erro ao reconhecer a face: {e}")
-            traceback.print_exc()
-        print("Nenhum rosto reconhecido.")
-        return None
-
-    def find_matching_encoding(self, encoding, known_encodings):
-        # encoding é um array numpy de shape (embedding_size,)
-        encoding = np.array(encoding).reshape(1, -1)
-        for idx, known_encoding in enumerate(known_encodings):
-            known_embedding = np.array(known_encoding).reshape(1, -1)
-            similarity = cosine_similarity(encoding, known_embedding)[0][0]
-            if similarity >= 0.7:  # Ajuste o limiar conforme necessário
-                return idx  # Retorna o índice da codificação correspondente
-        return None
+                print("Imagem capturada não está em formato RGB.")
+                return None
 
     def recognize_object(self):
         if not self.camera_available:
@@ -157,12 +205,21 @@ class VisionAssistant:
         try:
             results = self.object_detector(frame)
             if results:
+                highest_confidence = 0
+                best_object_name = None
                 for result in results:
                     if result.boxes and len(result.boxes) > 0:
-                        # Obter o nome do objeto com maior confiança
-                        class_id = int(result.boxes.cls[0])
-                        object_name = result.names[class_id]
-                        return object_name
+                        for box in result.boxes:
+                            conf = box.conf.cpu().item()
+                            if conf > highest_confidence:
+                                highest_confidence = conf
+                                class_id = int(box.cls.cpu().item())
+                                object_name = result.names[class_id]
+                                # Traduzir o nome do objeto para o português
+                                object_name_pt = self.object_translation.get(object_name, object_name)
+                                best_object_name = object_name_pt
+                if best_object_name:
+                    return best_object_name
             print("Nenhum objeto identificado.")
             return None
         except Exception as e:
@@ -184,18 +241,43 @@ class VisionAssistant:
             # Converter a imagem para RGB
             frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             # Tentar usar vários backends para melhorar a detecção
-            backends = ['mtcnn', 'opencv', 'ssd', 'dlib']
+            backends = ['opencv', 'mtcnn', 'ssd', 'dlib']
             for backend in backends:
                 try:
                     # Analisar atributos faciais usando DeepFace com enforce_detection=False
-                    result = DeepFace.analyze(frame_rgb, actions=['age', 'gender', 'emotion', 'race'],
-                                              detector_backend=backend, enforce_detection=False)
+                    result = DeepFace.analyze(
+                        frame_rgb,
+                        actions=['age', 'gender', 'emotion', 'race'],
+                        detector_backend=backend,
+                        enforce_detection=False
+                    )
                     # Verificar se há rosto detectado
                     if result:
                         # Se o resultado for uma lista, pegar o primeiro elemento
                         if isinstance(result, list) and len(result) > 0:
                             result = result[0]
                         if isinstance(result, dict) and 'age' in result:
+                            # Traduzir emoções
+                            dominant_emotion = result.get('dominant_emotion', '')
+                            if isinstance(dominant_emotion, str) and dominant_emotion in self.emotion_translation:
+                                result['dominant_emotion'] = self.emotion_translation[dominant_emotion]
+                            else:
+                                print(f"dominant_emotion não é uma string ou não está no dicionário de tradução: {dominant_emotion}")
+
+                            # Traduzir gênero usando 'dominant_gender'
+                            dominant_gender = result.get('dominant_gender', '')
+                            if isinstance(dominant_gender, str) and dominant_gender in self.gender_translation:
+                                result['dominant_gender'] = self.gender_translation[dominant_gender]
+                            else:
+                                print(f"dominant_gender não é uma string ou não está no dicionário de tradução: {dominant_gender}")
+
+                            # Traduzir etnia/raça
+                            dominant_race = result.get('dominant_race', '')
+                            if isinstance(dominant_race, str) and dominant_race in self.race_translation:
+                                result['dominant_race'] = self.race_translation[dominant_race]
+                            else:
+                                print(f"dominant_race não é uma string ou não está no dicionário de tradução: {dominant_race}")
+
                             return result  # Retorna os resultados da análise
                 except Exception as e:
                     print(f"Erro ao analisar atributos faciais com backend {backend}: {e}")

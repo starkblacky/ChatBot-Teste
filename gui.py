@@ -1,21 +1,28 @@
-# gui.py
+import sys
+import os
 import threading
 import random
+import datetime
+import requests
+import traceback
+import re
+import yt_dlp  # Importar o yt_dlp
+# Antes de importar o vlc, ajuste o PATH
+if sys.platform.startswith('win'):
+    os.environ['PATH'] += ';' + r'C:\Program Files\VideoLAN\VLC'  # Ajuste este caminho se necessário
+
+import vlc
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QPushButton,
-    QLabel, QHBoxLayout, QLineEdit, QMessageBox, QComboBox
+    QLabel, QHBoxLayout, QMessageBox, QComboBox, QLineEdit, QApplication
 )
 from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QImage, QPixmap
-from chatgpt_api import ChatGPT
 from voice import VoiceAssistant
 from vision import VisionAssistant
-import database
 import utils
-import numpy as np
 import cv2
-import traceback
-
+from chatgpt_api import ChatGPT
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -23,11 +30,15 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("Assistente Virtual")
 
         try:
-            self.chatgpt = ChatGPT()
             self.voice_assistant = VoiceAssistant()
             self.vision_assistant = VisionAssistant()
-            self.context = []
+            self.chatgpt = ChatGPT()
             self.is_listening = False
+            self.conversation_thread = None
+            self.media_player = None  # Para reprodução de música
+
+            # Inicializar contexto
+            self.context = []
 
             self.setup_ui()
 
@@ -98,24 +109,24 @@ class MainWindow(QMainWindow):
         if not self.is_listening:
             self.is_listening = True
             self.start_button.setText("Parar Conversa")
-            threading.Thread(target=self.conversation_flow).start()
+            self.voice_assistant.start_listening()
+            self.conversation_thread = threading.Thread(target=self.conversation_flow)
+            self.conversation_thread.start()
         else:
             self.is_listening = False
             self.start_button.setText("Iniciar Conversa")
+            self.voice_assistant.stop_listening()
             self.update_conversation_label("Conversa encerrada.")
 
-    def conversation_flow(self):
-        known_encodings = database.get_known_encodings()
-        known_users = database.get_user_names()
-        user_name = "Desconhecido"
-        user_registered = False
+            # Parar música ao encerrar conversa
+            if hasattr(self, 'media_player') and self.media_player is not None:
+                self.media_player.stop()
+                self.media_player = None
 
+    def conversation_flow(self):
         GREETING_KEYWORDS = ["oi", "olá", "bom dia", "boa tarde", "boa noite", "e aí", "fala", "salve"]
-        GREETING_RESPONSES = ["Olá!", "Oi!", "Como vai?", "É um prazer falar com você!", "Olá, como posso ajudar?",
-                              "Salve!"]
-        OBJECT_QUERY_KEYWORDS = ["o que é isso", "que objeto é esse", "o que estou segurando", "o que é isto",
-                                 "identifique isto"]
-        NAME_QUERY_KEYWORDS = ["você sabe meu nome", "qual é o meu nome", "quem sou eu", "me reconhece"]
+        GREETING_RESPONSES = ["Olá!", "Oi!", "Como vai?", "É um prazer falar com você!", "Olá, como posso ajudar?", "Salve!"]
+        OBJECT_QUERY_KEYWORDS = ["o que é isso", "que objeto é esse", "o que estou segurando", "o que é isto", "identifique isto"]
 
         ASSISTANT_NAME_QUERY = ["qual é o seu nome", "como você se chama"]
         ASSISTANT_AGE_QUERY = ["quantos anos você tem", "qual é a sua idade"]
@@ -123,12 +134,26 @@ class MainWindow(QMainWindow):
 
         USER_EMOTION_QUERY = ["como estou me sentindo", "qual é minha emoção", "como estou", "você sabe minha emoção"]
         USER_AGE_QUERY = ["quantos anos eu tenho", "você sabe minha idade", "qual é minha idade"]
-        USER_GENDER_QUERY = ["qual é meu gênero", "você sabe meu sexo", "qual meu sexo"]
-        USER_RACE_QUERY = ["qual é minha raça", "você sabe minha etnia", "qual é minha etnia"]
+        USER_GENDER_QUERY = ["meu gênero", "qual é meu gênero", "você sabe meu sexo", "qual é meu sexo"]
+        USER_RACE_QUERY = ["minha raça", "qual é minha raça", "você sabe minha etnia", "qual é minha etnia"]
+
+        TIME_QUERY_KEYWORDS = ["que horas é agora", "que horas são", "me diga as horas", "qual é o horário", "você sabe que horas são"]
+        DATE_QUERY_KEYWORDS = ["que dia é hoje", "qual a data de hoje", "qual é o dia", "qual o dia de hoje"]
+        WEATHER_QUERY_KEYWORDS = ["chover hoje", "vai chover hoje", "previsão do tempo", "qual a previsão para hoje", "vai chover", "previsão de chuva"]
+
+        PLAY_MUSIC_COMMANDS = ["tocar música", "reproduzir música", "colocar música"]
+        STOP_MUSIC_COMMANDS = ["parar música", "pausar música", "stop música"]
+
+        # Contexto vazio (não salva mais histórico)
+        self.context = []
 
         while self.is_listening:
             self.update_conversation_label("Você pode falar agora...")
             user_input = self.voice_assistant.listen()
+
+            if not self.is_listening:
+                break  # Sai do loop se is_listening for False
+
             if not user_input:
                 self.update_conversation_label("Não entendi. Por favor, tente novamente.")
                 continue
@@ -142,42 +167,12 @@ class MainWindow(QMainWindow):
                 if any(keyword in user_input_lower for keyword in GREETING_KEYWORDS):
                     response = random.choice(GREETING_RESPONSES)
 
-                # Verificar registro do usuário
-                elif "meu nome é" in user_input_lower:
-                    if self.vision_assistant.camera_available:
-                        user_name = user_input_lower.split("meu nome é")[1].strip().capitalize()
-                        # Registrar usuário
-                        encoding = self.vision_assistant.encode_face()
-                        if encoding is not None:
-                            # Verificar se a face já está registrada
-                            matched_index = self.vision_assistant.find_matching_encoding(encoding, known_encodings)
-                            if matched_index is not None:
-                                existing_name = known_users[matched_index]
-                                response = f"Desculpe, já reconheço você como {existing_name}. Não é possível registrar o mesmo rosto com outro nome."
-                            else:
-                                database.register_user(user_name, encoding)
-                                user_registered = True
-                                self.update_conversation_label(f"Usuário {user_name} registrado com sucesso.")
-                                # Atualizar as listas de encodings e nomes
-                                known_encodings = database.get_known_encodings()
-                                known_users = database.get_user_names()
-                                response = f"Muito prazer, {user_name}!"
-                        else:
-                            response = "Não consegui detectar seu rosto. Por favor, tente novamente."
-                    else:
-                        response = "Câmera não disponível para registrar o usuário."
-
-                # Comando para verificar se a IA sabe o nome do usuário
-                elif any(keyword in user_input_lower for keyword in NAME_QUERY_KEYWORDS):
-                    if self.vision_assistant.camera_available:
-                        index = self.vision_assistant.recognize_face(known_encodings)
-                        if index is not None:
-                            recognized_name = known_users[index]
-                            response = f"Claro, você é {recognized_name}!"
-                        else:
-                            response = "Desculpe, não consegui reconhecê-lo."
-                    else:
-                        response = "Câmera não disponível para reconhecimento facial."
+                # Comandos especiais para clonagem de voz
+                elif "clonar minha voz" in user_input_lower:
+                    response = self.voice_assistant.clone_user_voice()
+                elif "desativar clonagem de voz" in user_input_lower:
+                    self.voice_assistant.using_cloned_voice = False
+                    response = "Voltando para a voz padrão."
 
                 # Reconhecimento de objetos
                 elif any(keyword in user_input_lower for keyword in OBJECT_QUERY_KEYWORDS):
@@ -200,10 +195,7 @@ class MainWindow(QMainWindow):
                     response = f"Eu gosto de {hobbies_str}."
 
                 # Perguntas sobre atributos faciais do usuário
-                elif any(keyword in user_input_lower for keyword in USER_EMOTION_QUERY +
-                                                                USER_AGE_QUERY +
-                                                                USER_GENDER_QUERY +
-                                                                USER_RACE_QUERY):
+                elif any(keyword in user_input_lower for keyword in USER_EMOTION_QUERY + USER_AGE_QUERY + USER_GENDER_QUERY + USER_RACE_QUERY):
                     if self.vision_assistant.camera_available:
                         attributes = self.vision_assistant.analyze_face_attributes()
                         if attributes:
@@ -222,7 +214,7 @@ class MainWindow(QMainWindow):
                                     response = "Desculpe, não consegui determinar sua idade."
 
                             elif any(keyword in user_input_lower for keyword in USER_GENDER_QUERY):
-                                gender = attributes.get('gender', '')
+                                gender = attributes.get('dominant_gender', '')
                                 if gender:
                                     response = f"Você parece ser do gênero {gender}."
                                 else:
@@ -231,34 +223,150 @@ class MainWindow(QMainWindow):
                             elif any(keyword in user_input_lower for keyword in USER_RACE_QUERY):
                                 race = attributes.get('dominant_race', '')
                                 if race:
-                                    response = f"Você parece ser da raça {race}."
+                                    response = f"Você parece ser de etnia {race}."
                                 else:
-                                    response = "Desculpe, não consegui determinar sua raça."
+                                    response = "Desculpe, não consegui determinar sua etnia."
                         else:
                             response = "Desculpe, não consegui analisar seus atributos faciais. Certifique-se de que seu rosto está visível para a câmera."
                     else:
                         response = "Câmera não disponível para analisar atributos faciais."
 
+                # Consultas sobre data e hora
+                elif any(keyword in user_input_lower for keyword in TIME_QUERY_KEYWORDS):
+                    now = datetime.datetime.now()
+                    current_time = now.strftime("%H:%M")
+                    response = f"Agora são {current_time}."
+                elif any(keyword in user_input_lower for keyword in DATE_QUERY_KEYWORDS):
+                    now = datetime.datetime.now()
+                    current_date = now.strftime("%d de %B de %Y")
+                    response = f"Hoje é {current_date}."
+
+                # Consulta sobre previsão do tempo
+                elif any(keyword in user_input_lower for keyword in WEATHER_QUERY_KEYWORDS):
+                    response = self.get_weather_forecast()
+
+                # Comando para tocar música
+                elif any(keyword in user_input_lower for keyword in PLAY_MUSIC_COMMANDS):
+                    # Extrair nome da música do input do usuário
+                    song_name = user_input_lower
+                    for keyword in PLAY_MUSIC_COMMANDS:
+                        if keyword in song_name:
+                            song_name = song_name.replace(keyword, '').strip()
+                            break
+                    if song_name:
+                        response = self.play_music(song_name)
+                    else:
+                        response = "Por favor, diga o nome da música que deseja ouvir."
+
+                # Comando para parar música
+                elif any(keyword in user_input_lower for keyword in STOP_MUSIC_COMMANDS):
+                    response = self.stop_music()
+
                 else:
-                    # Obter resposta da IA
-                    response = self.chatgpt.get_response(user_input, self.context)
+                    # Obter resposta da IA usando ChatGPT
+                    assistant_response = self.chatgpt.get_response(user_input, self.context)
+                    response = assistant_response
+                    # Adicionar a conversa ao contexto
+                    self.context.append({'role': 'user', 'content': user_input})
+                    self.context.append({'role': 'assistant', 'content': response})
 
                 self.update_conversation_label(f"Assistente: {response}")
 
                 # Desativar a escuta enquanto a IA fala
-                self.is_listening = False
+                self.voice_assistant.stop_listening()
                 self.voice_assistant.speak(response)
-                self.is_listening = True
-
-                # Salvar conversa no banco de dados se o usuário for registrado
-                if user_registered:
-                    database.save_conversation(user_name, user_input, response)
+                if not self.is_listening:
+                    break  # Sai do loop se is_listening for False
+                self.voice_assistant.start_listening()
 
             except Exception as e:
                 print(f"Erro no fluxo de conversa: {e}")
                 traceback.print_exc()
                 self.update_conversation_label("Desculpe, ocorreu um erro ao processar sua solicitação.")
                 self.is_listening = False
+                self.voice_assistant.stop_listening()
+                break
+
+    def get_weather_forecast(self):
+        try:
+            api_key = utils.get_setting("weatherapi_api_key", "")
+            if not api_key:
+                return "API Key da WeatherAPI.com não configurada. Por favor, configure sua API Key nas configurações."
+            city = utils.get_setting("city_name", "São Paulo")  # Cidade padrão
+            url = f"http://api.weatherapi.com/v1/forecast.json?key={api_key}&q={city}&lang=pt&days=1"
+            response = requests.get(url)
+            data = response.json()
+
+            if 'error' in data:
+                return "Desculpe, não consegui obter a previsão do tempo no momento."
+
+            forecast = data['forecast']['forecastday'][0]
+            day = forecast['day']
+            condition = day['condition']['text']
+            chance_of_rain = day.get('daily_chance_of_rain', 0)
+
+            response = f"A previsão para hoje em {city} é de {condition.lower()}."
+            if int(chance_of_rain) > 0:
+                response += f" Há {chance_of_rain}% de chance de chuva."
+            else:
+                response += " Não há previsão de chuva."
+            return response
+        except Exception as e:
+            print(f"Erro ao obter a previsão do tempo: {e}")
+            traceback.print_exc()
+            return "Desculpe, não consegui obter a previsão do tempo."
+
+    def play_music(self, song_name):
+        try:
+            # Pesquisar no YouTube
+            search_query = song_name.replace(' ', '+')
+            url = f"https://www.youtube.com/results?search_query={search_query}"
+            html = requests.get(url).text
+            video_ids = re.findall(r"watch\?v=(\S{11})", html)
+            if not video_ids:
+                return "Desculpe, não consegui encontrar a música solicitada."
+
+            video_url = f"https://www.youtube.com/watch?v={video_ids[0]}"
+
+            # Usar o yt_dlp para obter o URL de streaming
+            ydl_opts = {
+                'format': 'bestaudio/best',
+                'quiet': True,
+                'no_warnings': True,
+            }
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info_dict = ydl.extract_info(video_url, download=False)
+                audio_url = info_dict['url']
+                title = info_dict.get('title', 'música')
+
+            # Parar qualquer música que esteja tocando
+            if hasattr(self, 'media_player') and self.media_player is not None:
+                self.media_player.stop()
+
+            self.instance = vlc.Instance()
+            self.media_player = self.instance.media_player_new()
+            media = self.instance.media_new(audio_url)
+            media.get_mrl()
+            self.media_player.set_media(media)
+            self.media_player.play()
+            return f"Tocando {title}."
+        except Exception as e:
+            print(f"Erro ao reproduzir música: {e}")
+            traceback.print_exc()
+            return "Desculpe, ocorreu um erro ao tentar reproduzir a música."
+
+    def stop_music(self):
+        try:
+            if hasattr(self, 'media_player') and self.media_player is not None:
+                self.media_player.stop()
+                self.media_player = None
+                return "Música interrompida."
+            else:
+                return "Nenhuma música está sendo reproduzida no momento."
+        except Exception as e:
+            print(f"Erro ao parar música: {e}")
+            traceback.print_exc()
+            return "Desculpe, ocorreu um erro ao tentar parar a música."
 
     def update_conversation_label(self, text):
         self.conversation_label.setText(text)
@@ -272,7 +380,6 @@ class MainWindow(QMainWindow):
             traceback.print_exc()
             QMessageBox.critical(self, "Erro", "Ocorreu um erro ao abrir as configurações.")
 
-
 class SettingsWindow(QMainWindow):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -284,12 +391,36 @@ class SettingsWindow(QMainWindow):
         self.central_widget = QWidget()
         self.layout = QVBoxLayout()
 
-        # Campo para API Key
-        self.api_key_label = QLabel("API Key do ChatGPT:")
+        # Campo para API Key do OpenAI
+        self.api_key_label = QLabel("API Key do OpenAI:")
         self.api_key_input = QLineEdit()
         self.api_key_input.setText(utils.get_setting("openai_api_key", ""))
+        self.api_key_input.setEchoMode(QLineEdit.Password)
         self.layout.addWidget(self.api_key_label)
         self.layout.addWidget(self.api_key_input)
+
+        # Campo para API Key do ElevenLabs
+        self.elevenlabs_api_key_label = QLabel("API Key do ElevenLabs:")
+        self.elevenlabs_api_key_input = QLineEdit()
+        self.elevenlabs_api_key_input.setText(utils.get_setting("elevenlabs_api_key", ""))
+        self.elevenlabs_api_key_input.setEchoMode(QLineEdit.Password)
+        self.layout.addWidget(self.elevenlabs_api_key_label)
+        self.layout.addWidget(self.elevenlabs_api_key_input)
+
+        # Campo para API Key da WeatherAPI.com
+        self.weatherapi_key_label = QLabel("API Key da WeatherAPI.com:")
+        self.weatherapi_key_input = QLineEdit()
+        self.weatherapi_key_input.setText(utils.get_setting("weatherapi_api_key", ""))
+        self.weatherapi_key_input.setEchoMode(QLineEdit.Password)
+        self.layout.addWidget(self.weatherapi_key_label)
+        self.layout.addWidget(self.weatherapi_key_input)
+
+        # Campo para o nome da cidade
+        self.city_label = QLabel("Nome da Cidade:")
+        self.city_input = QLineEdit()
+        self.city_input.setText(utils.get_setting("city_name", ""))
+        self.layout.addWidget(self.city_label)
+        self.layout.addWidget(self.city_input)
 
         # Seleção de Microfone
         self.mic_label = QLabel("Dispositivo de Entrada de Áudio:")
@@ -351,6 +482,9 @@ class SettingsWindow(QMainWindow):
     def save_settings(self):
         try:
             utils.set_setting("openai_api_key", self.api_key_input.text())
+            utils.set_setting("elevenlabs_api_key", self.elevenlabs_api_key_input.text())
+            utils.set_setting("weatherapi_api_key", self.weatherapi_key_input.text())
+            utils.set_setting("city_name", self.city_input.text())
             chosen_mic_index = self.mic_selector.itemData(self.mic_selector.currentIndex())
             utils.set_setting("microphone_index", chosen_mic_index)
             utils.set_setting("camera_index", self.cam_selector.currentIndex())
@@ -362,3 +496,9 @@ class SettingsWindow(QMainWindow):
             print(f"Erro ao salvar as configurações: {e}")
             traceback.print_exc()
             QMessageBox.critical(self, "Erro", "Ocorreu um erro ao salvar as configurações.")
+
+if __name__ == "__main__":
+    app = QApplication(sys.argv)
+    window = MainWindow()
+    window.show()
+    sys.exit(app.exec_())

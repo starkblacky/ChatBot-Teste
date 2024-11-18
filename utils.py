@@ -1,4 +1,3 @@
-# utils.py
 import json
 import os
 import cv2
@@ -13,10 +12,12 @@ def get_setting(key, default=None):
             with open(SETTINGS_FILE, 'r') as f:
                 settings = json.load(f)
                 return settings.get(key, default)
+        else:
+            return default
     except Exception as e:
         print(f"Erro ao carregar a configuração {key}: {e}")
         traceback.print_exc()
-    return default
+        return default
 
 def set_setting(key, value):
     try:
@@ -32,12 +33,6 @@ def set_setting(key, value):
         traceback.print_exc()
 
 def get_microphone_list():
-    """
-    Esta função obtém a lista de microfones disponíveis e seus respectivos índices usando o sounddevice.
-
-    Retorna:
-    list: Lista de dicionários, onde cada dicionário contém 'index' e 'name' do dispositivo.
-    """
     mic_list = []
     try:
         devices = sd.query_devices()
@@ -53,26 +48,16 @@ def get_camera_list():
     index = 0
     arr = []
     while True:
-        # Testar vários backends para melhor detecção de câmeras
-        backends = [cv2.CAP_DSHOW, cv2.CAP_MSMF, cv2.CAP_V4L2, cv2.CAP_ANY]
-        camera_found = False
-        for backend in backends:
-            cap = cv2.VideoCapture(index, backend)
-            if cap.isOpened():
-                arr.append(f"Câmera {index}")
-                cap.release()
-                camera_found = True
-                break
-            cap.release()
-        if not camera_found:
+        cap = cv2.VideoCapture(index)
+        if not cap.read()[0]:
             break
-        index += 1
+        else:
+            arr.append(f"Câmera {index}")
+        cap.release()
+        index +=1
     return arr if arr else ["Nenhuma câmera detectada"]
 
 def get_backend_list():
-    """
-    Retorna uma lista de backends de câmera disponíveis.
-    """
     backends = ["AUTO"]
     if hasattr(cv2, 'CAP_DSHOW'):
         backends.append("CAP_DSHOW")

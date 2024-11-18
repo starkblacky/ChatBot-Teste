@@ -10,9 +10,11 @@ class ChatGPT:
 
     def get_response(self, message, context):
         try:
+            # Certifique-se de que o contexto está no formato correto
+            messages = context + [{"role": "user", "content": message}]
             response = self.client.chat.completions.create(
                 model="gpt-3.5-turbo",
-                messages=context + [{"role": "user", "content": message}],
+                messages=messages,
                 temperature=0.7,
             )
             assistant_message = response.choices[0].message.content

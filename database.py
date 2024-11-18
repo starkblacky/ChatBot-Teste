@@ -1,75 +1,33 @@
 # database.py
-import sqlite3
-import pickle
+# Como o sistema não vai mais lembrar dos usuários, podemos simplificar o código do banco de dados
+# para apenas salvar e recuperar conversas gerais, sem associação a usuários específicos.
 
-DB_NAME = 'database.db'
+from pymongo import MongoClient
+from datetime import datetime
+
+# Configurações do MongoDB
+DATABASE_NAME = 'assistente_virtual'
+CONVERSATION_COLLECTION = 'conversations'
+
+client = MongoClient('mongodb://localhost:27017/')
+db = client[DATABASE_NAME]
+conversations_collection = db[CONVERSATION_COLLECTION]
 
 def setup_database():
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
+    # Criar índices para otimizar consultas
+    conversations_collection.create_index('timestamp')
 
-    # Tabela de usuários
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS users (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL,
-            encoding BLOB NOT NULL
-        )
-    ''')
+def save_conversation(user_message, assistant_response):
+    conversations_collection.insert_one({
+        'user_message': user_message,
+        'assistant_response': assistant_response,
+        'timestamp': datetime.now()
+    })
 
-    # Tabela de conversas
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS conversations (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER,
-            user_message TEXT NOT NULL,
-            assistant_response TEXT NOT NULL,
-            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY(user_id) REFERENCES users(id)
-        )
-    ''')
-    conn.commit()
-    conn.close()
-
-def register_user(name, encoding):
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
-    serialized_encoding = pickle.dumps(encoding)
-    cursor.execute('INSERT INTO users (name, encoding) VALUES (?, ?)', (name, serialized_encoding))
-    conn.commit()
-    conn.close()
-
-def save_conversation(user_name, user_message, assistant_response):
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
-    # Obter o ID do usuário
-    cursor.execute('SELECT id FROM users WHERE name = ?', (user_name,))
-    result = cursor.fetchone()
-    if result:
-        user_id = result[0]
-    else:
-        user_id = None
-    cursor.execute('''
-        INSERT INTO conversations (user_id, user_message, assistant_response)
-        VALUES (?, ?, ?)
-    ''', (user_id, user_message, assistant_response))
-    conn.commit()
-    conn.close()
-
-def get_known_encodings():
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
-    cursor.execute('SELECT encoding FROM users')
-    results = cursor.fetchall()
-    encodings = [pickle.loads(row[0]) for row in results]
-    conn.close()
-    return encodings
-
-def get_user_names():
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
-    cursor.execute('SELECT name FROM users')
-    results = cursor.fetchall()
-    names = [row[0] for row in results]
-    conn.close()
-    return names
+def get_conversation_history():
+    conversations = conversations_collection.find().sort('timestamp', 1)
+    conversation_history = []
+    for conv in conversations:
+        conversation_history.append({'role': 'user', 'content': conv['user_message']})
+        conversation_history.append({'role': 'assistant', 'content': conv['assistant_response']})
+    return conversation_history
