@@ -1,0 +1,6 @@
+{
+    "openai_api_key": "",
+    "microphone_index": 0,
+    "camera_index": 0,
+    "camera_backend": "AUTO"
+}
