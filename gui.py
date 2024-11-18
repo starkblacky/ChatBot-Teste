@@ -105,10 +105,10 @@ class MainWindow(QMainWindow):
             self.update_conversation_label("Conversa encerrada.")
 
     def conversation_flow(self):
-        user_name = "Desconhecido"
-        user_registered = False
         known_encodings = database.get_known_encodings()
         known_users = database.get_user_names()
+        user_name = "Desconhecido"
+        user_registered = False
 
         GREETING_KEYWORDS = ["oi", "olá", "bom dia", "boa tarde", "boa noite", "e aí", "fala", "salve"]
         GREETING_RESPONSES = ["Olá!", "Oi!", "Como vai?", "É um prazer falar com você!", "Olá, como posso ajudar?",
@@ -149,13 +149,19 @@ class MainWindow(QMainWindow):
                         # Registrar usuário
                         encoding = self.vision_assistant.encode_face()
                         if encoding is not None:
-                            database.register_user(user_name, encoding)
-                            user_registered = True
-                            self.update_conversation_label(f"Usuário {user_name} registrado com sucesso.")
-                            # Atualizar as listas de encodings e nomes
-                            known_encodings = database.get_known_encodings()
-                            known_users = database.get_user_names()
-                            response = f"Muito prazer, {user_name}!"
+                            # Verificar se a face já está registrada
+                            matched_index = self.vision_assistant.find_matching_encoding(encoding, known_encodings)
+                            if matched_index is not None:
+                                existing_name = known_users[matched_index]
+                                response = f"Desculpe, já reconheço você como {existing_name}. Não é possível registrar o mesmo rosto com outro nome."
+                            else:
+                                database.register_user(user_name, encoding)
+                                user_registered = True
+                                self.update_conversation_label(f"Usuário {user_name} registrado com sucesso.")
+                                # Atualizar as listas de encodings e nomes
+                                known_encodings = database.get_known_encodings()
+                                known_users = database.get_user_names()
+                                response = f"Muito prazer, {user_name}!"
                         else:
                             response = "Não consegui detectar seu rosto. Por favor, tente novamente."
                     else:
@@ -237,21 +243,22 @@ class MainWindow(QMainWindow):
                     # Obter resposta da IA
                     response = self.chatgpt.get_response(user_input, self.context)
 
+                self.update_conversation_label(f"Assistente: {response}")
+
+                # Desativar a escuta enquanto a IA fala
+                self.is_listening = False
+                self.voice_assistant.speak(response)
+                self.is_listening = True
+
+                # Salvar conversa no banco de dados se o usuário for registrado
+                if user_registered:
+                    database.save_conversation(user_name, user_input, response)
+
             except Exception as e:
                 print(f"Erro no fluxo de conversa: {e}")
                 traceback.print_exc()
-                response = "Desculpe, ocorreu um erro ao processar sua solicitação."
-
-            self.update_conversation_label(f"Assistente: {response}")
-
-            # Desativar a escuta enquanto a IA fala
-            self.is_listening = False
-            self.voice_assistant.speak(response)
-            self.is_listening = True
-
-            # Salvar conversa no banco de dados se o usuário for registrado
-            if user_registered:
-                database.save_conversation(user_name, user_input, response)
+                self.update_conversation_label("Desculpe, ocorreu um erro ao processar sua solicitação.")
+                self.is_listening = False
 
     def update_conversation_label(self, text):
         self.conversation_label.setText(text)

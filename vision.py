@@ -61,11 +61,19 @@ class VisionAssistant:
                 if not cap.isOpened():
                     cap.release()
                     continue
+                # Definir resolução da câmera
+                cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+                cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
                 ret, frame = cap.read()
                 cap.release()
                 if ret and frame is not None and np.sum(frame) > 0:
-                    # Não reduzir a resolução da imagem
-                    return frame
+                    # Verifique se a imagem tem 3 canais
+                    if len(frame.shape) == 3 and frame.shape[2] == 3:
+                        return frame
+                    else:
+                        print("Imagem capturada não está em formato RGB.")
+                else:
+                    continue
             print("Não foi possível capturar a imagem após múltiplas tentativas")
             return None
 
@@ -80,8 +88,10 @@ class VisionAssistant:
             return None
 
         try:
+            # Converter a imagem para RGB
+            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             # Usando o DeepFace para representar a face com enforce_detection=False
-            result = DeepFace.represent(frame, model_name=self.face_recognition_model, detector_backend='mtcnn', enforce_detection=False)
+            result = DeepFace.represent(frame_rgb, model_name=self.face_recognition_model, detector_backend='mtcnn', enforce_detection=False)
             if result and len(result) > 0:
                 return result[0]['embedding']  # Retorna a representação da primeira face detectada
             else:
@@ -102,8 +112,10 @@ class VisionAssistant:
             return None
 
         try:
+            # Converter a imagem para RGB
+            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             # Representa a face atual com enforce_detection=False
-            result = DeepFace.represent(frame, model_name=self.face_recognition_model, detector_backend='mtcnn', enforce_detection=False)
+            result = DeepFace.represent(frame_rgb, model_name=self.face_recognition_model, detector_backend='mtcnn', enforce_detection=False)
             if result and len(result) > 0:
                 captured_embedding = result[0]['embedding']
 
@@ -120,6 +132,16 @@ class VisionAssistant:
             print(f"Erro ao reconhecer a face: {e}")
             traceback.print_exc()
         print("Nenhum rosto reconhecido.")
+        return None
+
+    def find_matching_encoding(self, encoding, known_encodings):
+        # encoding é um array numpy de shape (embedding_size,)
+        encoding = np.array(encoding).reshape(1, -1)
+        for idx, known_encoding in enumerate(known_encodings):
+            known_embedding = np.array(known_encoding).reshape(1, -1)
+            similarity = cosine_similarity(encoding, known_embedding)[0][0]
+            if similarity >= 0.7:  # Ajuste o limiar conforme necessário
+                return idx  # Retorna o índice da codificação correspondente
         return None
 
     def recognize_object(self):
@@ -159,15 +181,27 @@ class VisionAssistant:
             return None
 
         try:
-            # Analisar atributos faciais usando DeepFace com enforce_detection=False
-            result = DeepFace.analyze(frame, actions=['age', 'gender', 'emotion', 'race'],
-                                      detector_backend='mtcnn', enforce_detection=False)
-            # Verificar se há rosto detectado
-            if result and isinstance(result, dict) and 'age' in result:
-                return result  # Retorna os resultados da análise
-            else:
-                print("Nenhum rosto detectado para análise de atributos.")
-                return None
+            # Converter a imagem para RGB
+            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            # Tentar usar vários backends para melhorar a detecção
+            backends = ['mtcnn', 'opencv', 'ssd', 'dlib']
+            for backend in backends:
+                try:
+                    # Analisar atributos faciais usando DeepFace com enforce_detection=False
+                    result = DeepFace.analyze(frame_rgb, actions=['age', 'gender', 'emotion', 'race'],
+                                              detector_backend=backend, enforce_detection=False)
+                    # Verificar se há rosto detectado
+                    if result:
+                        # Se o resultado for uma lista, pegar o primeiro elemento
+                        if isinstance(result, list) and len(result) > 0:
+                            result = result[0]
+                        if isinstance(result, dict) and 'age' in result:
+                            return result  # Retorna os resultados da análise
+                except Exception as e:
+                    print(f"Erro ao analisar atributos faciais com backend {backend}: {e}")
+                    continue
+            print("Nenhum rosto detectado para análise de atributos.")
+            return None
 
         except Exception as e:
             print(f"Erro ao analisar atributos faciais: {e}")
