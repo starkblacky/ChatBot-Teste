@@ -5,13 +5,17 @@ from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QPushButton,
     QLabel, QHBoxLayout, QLineEdit, QMessageBox, QComboBox
 )
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, QTimer
+from PyQt5.QtGui import QImage, QPixmap
 from chatgpt_api import ChatGPT
 from voice import VoiceAssistant
 from vision import VisionAssistant
 import database
 import utils
+import numpy as np
+import cv2
 import traceback
+
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -31,6 +35,12 @@ class MainWindow(QMainWindow):
             self.assistant_name = "Eva"
             self.assistant_age = "1 ano"
             self.assistant_hobbies = ["conversar com pessoas", "aprender coisas novas", "ajudar no que for preciso"]
+
+            # Timer para atualizar a imagem da câmera
+            if self.vision_assistant.camera_available:
+                self.timer = QTimer()
+                self.timer.timeout.connect(self.update_camera_view)
+                self.timer.start(30)  # Atualiza a cada 30 ms
         except Exception as e:
             print(f"Erro ao iniciar a aplicação: {e}")
             traceback.print_exc()
@@ -44,6 +54,14 @@ class MainWindow(QMainWindow):
         self.conversation_label.setAlignment(Qt.AlignLeft)
         self.conversation_label.setWordWrap(True)
         self.layout.addWidget(self.conversation_label)
+
+        # Exibir imagem da câmera
+        if self.vision_assistant.camera_available:
+            self.camera_label = QLabel()
+            self.camera_label.setFixedSize(640, 480)
+            self.layout.addWidget(self.camera_label)
+        else:
+            self.camera_label = None
 
         # Botões
         buttons_layout = QHBoxLayout()
@@ -60,6 +78,22 @@ class MainWindow(QMainWindow):
         self.central_widget.setLayout(self.layout)
         self.setCentralWidget(self.central_widget)
 
+    def update_camera_view(self):
+        try:
+            frame = self.vision_assistant.capture_image()
+            if frame is not None:
+                # Converter imagem OpenCV (BGR) para Qt (RGB)
+                rgb_image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                h, w, ch = rgb_image.shape
+                bytes_per_line = ch * w
+                qt_image = QImage(rgb_image.data, w, h, bytes_per_line, QImage.Format_RGB888)
+                pixmap = QPixmap.fromImage(qt_image)
+                self.camera_label.setPixmap(
+                    pixmap.scaled(self.camera_label.width(), self.camera_label.height(), Qt.KeepAspectRatio))
+        except Exception as e:
+            print(f"Erro ao atualizar a visualização da câmera: {e}")
+            traceback.print_exc()
+
     def start_conversation(self):
         if not self.is_listening:
             self.is_listening = True
@@ -68,7 +102,7 @@ class MainWindow(QMainWindow):
         else:
             self.is_listening = False
             self.start_button.setText("Iniciar Conversa")
-            self.conversation_label.setText("Conversa encerrada.")
+            self.update_conversation_label("Conversa encerrada.")
 
     def conversation_flow(self):
         user_name = "Desconhecido"
@@ -77,8 +111,10 @@ class MainWindow(QMainWindow):
         known_users = database.get_user_names()
 
         GREETING_KEYWORDS = ["oi", "olá", "bom dia", "boa tarde", "boa noite", "e aí", "fala", "salve"]
-        GREETING_RESPONSES = ["Olá!", "Oi!", "Como vai?", "É um prazer falar com você!", "Olá, como posso ajudar?", "Salve!"]
-        OBJECT_QUERY_KEYWORDS = ["o que é isso", "que objeto é esse", "o que estou segurando", "o que é isto", "identifique isto"]
+        GREETING_RESPONSES = ["Olá!", "Oi!", "Como vai?", "É um prazer falar com você!", "Olá, como posso ajudar?",
+                              "Salve!"]
+        OBJECT_QUERY_KEYWORDS = ["o que é isso", "que objeto é esse", "o que estou segurando", "o que é isto",
+                                 "identifique isto"]
         NAME_QUERY_KEYWORDS = ["você sabe meu nome", "qual é o meu nome", "quem sou eu", "me reconhece"]
 
         ASSISTANT_NAME_QUERY = ["qual é o seu nome", "como você se chama"]
@@ -159,9 +195,9 @@ class MainWindow(QMainWindow):
 
                 # Perguntas sobre atributos faciais do usuário
                 elif any(keyword in user_input_lower for keyword in USER_EMOTION_QUERY +
-                                                              USER_AGE_QUERY +
-                                                              USER_GENDER_QUERY +
-                                                              USER_RACE_QUERY):
+                                                                USER_AGE_QUERY +
+                                                                USER_GENDER_QUERY +
+                                                                USER_RACE_QUERY):
                     if self.vision_assistant.camera_available:
                         attributes = self.vision_assistant.analyze_face_attributes()
                         if attributes:
@@ -229,6 +265,7 @@ class MainWindow(QMainWindow):
             traceback.print_exc()
             QMessageBox.critical(self, "Erro", "Ocorreu um erro ao abrir as configurações.")
 
+
 class SettingsWindow(QMainWindow):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -253,13 +290,20 @@ class SettingsWindow(QMainWindow):
         try:
             mic_list = utils.get_microphone_list()
             if not mic_list:
-                mic_list = ["Nenhum dispositivo encontrado"]
-            self.mic_selector.addItems(mic_list)
-            self.mic_selector.setCurrentIndex(utils.get_setting("microphone_index", 0))
+                mic_list = [{"index": None, "name": "Nenhum dispositivo encontrado"}]
+            for mic in mic_list:
+                self.mic_selector.addItem(mic['name'], mic['index'])
+            # Definir o índice atual com base no índice do microfone salvo
+            saved_mic_index = utils.get_setting("microphone_index", None)
+            if saved_mic_index is not None:
+                for i in range(self.mic_selector.count()):
+                    if self.mic_selector.itemData(i) == saved_mic_index:
+                        self.mic_selector.setCurrentIndex(i)
+                        break
         except Exception as e:
             print(f"Erro ao obter a lista de microfones: {e}")
             traceback.print_exc()
-            self.mic_selector.addItem("Erro ao carregar dispositivos")
+            self.mic_selector.addItem("Erro ao carregar dispositivos", None)
         self.layout.addWidget(self.mic_label)
         self.layout.addWidget(self.mic_selector)
 
@@ -300,7 +344,8 @@ class SettingsWindow(QMainWindow):
     def save_settings(self):
         try:
             utils.set_setting("openai_api_key", self.api_key_input.text())
-            utils.set_setting("microphone_index", self.mic_selector.currentIndex())
+            chosen_mic_index = self.mic_selector.itemData(self.mic_selector.currentIndex())
+            utils.set_setting("microphone_index", chosen_mic_index)
             utils.set_setting("camera_index", self.cam_selector.currentIndex())
             utils.set_setting("camera_backend", self.backend_selector.currentText())
 

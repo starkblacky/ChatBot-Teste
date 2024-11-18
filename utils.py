@@ -1,50 +1,71 @@
 # utils.py
 import json
 import os
-import speech_recognition as sr
 import cv2
+import traceback
+import sounddevice as sd
 
 SETTINGS_FILE = 'settings.json'
 
 def get_setting(key, default=None):
-    if os.path.exists(SETTINGS_FILE):
-        with open(SETTINGS_FILE, 'r') as f:
-            settings = json.load(f)
-            return settings.get(key, default)
+    try:
+        if os.path.exists(SETTINGS_FILE):
+            with open(SETTINGS_FILE, 'r') as f:
+                settings = json.load(f)
+                return settings.get(key, default)
+    except Exception as e:
+        print(f"Erro ao carregar a configuração {key}: {e}")
+        traceback.print_exc()
     return default
 
 def set_setting(key, value):
-    settings = {}
-    if os.path.exists(SETTINGS_FILE):
-        with open(SETTINGS_FILE, 'r') as f:
-            settings = json.load(f)
-    settings[key] = value
-    with open(SETTINGS_FILE, 'w') as f:
-        json.dump(settings, f, indent=4)
+    try:
+        settings = {}
+        if os.path.exists(SETTINGS_FILE):
+            with open(SETTINGS_FILE, 'r') as f:
+                settings = json.load(f)
+        settings[key] = value
+        with open(SETTINGS_FILE, 'w') as f:
+            json.dump(settings, f, indent=4)
+    except Exception as e:
+        print(f"Erro ao salvar a configuração {key}: {e}")
+        traceback.print_exc()
 
 def get_microphone_list():
     """
-    Esta função obtém a lista de microfones disponíveis e seus respectivos índices.
+    Esta função obtém a lista de microfones disponíveis e seus respectivos índices usando o sounddevice.
 
     Retorna:
-    list: Lista de strings, onde cada string representa um microfone no formato "index: name".
+    list: Lista de dicionários, onde cada dicionário contém 'index' e 'name' do dispositivo.
     """
     mic_list = []
-    for index, name in enumerate(sr.Microphone.list_microphone_names()):
-        mic_list.append(f"{index}: {name}")
+    try:
+        devices = sd.query_devices()
+        for index, dev in enumerate(devices):
+            if dev['max_input_channels'] > 0:
+                mic_list.append({'index': index, 'name': dev['name']})
+    except Exception as e:
+        print(f"Erro ao listar microfones: {e}")
+        traceback.print_exc()
     return mic_list
 
 def get_camera_list():
     index = 0
     arr = []
     while True:
-        cap = cv2.VideoCapture(index, cv2.CAP_DSHOW)
-        if not cap.isOpened():
+        # Testar vários backends para melhor detecção de câmeras
+        backends = [cv2.CAP_DSHOW, cv2.CAP_MSMF, cv2.CAP_V4L2, cv2.CAP_ANY]
+        camera_found = False
+        for backend in backends:
+            cap = cv2.VideoCapture(index, backend)
+            if cap.isOpened():
+                arr.append(f"Câmera {index}")
+                cap.release()
+                camera_found = True
+                break
             cap.release()
+        if not camera_found:
             break
-        else:
-            arr.append(f"Câmera {index}")
-        cap.release()
         index += 1
     return arr if arr else ["Nenhuma câmera detectada"]
 

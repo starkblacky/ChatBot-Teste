@@ -3,11 +3,14 @@ import speech_recognition as sr
 import pyttsx3
 import utils
 import threading
+import traceback
+import sounddevice as sd
+import numpy as np
 
 class VoiceAssistant:
     def __init__(self):
         self.recognizer = sr.Recognizer()
-        self.microphone_index = utils.get_setting("microphone_index", 0)
+        self.microphone_index = utils.get_setting("microphone_index", None)
         self.engine = pyttsx3.init()
         self.configure_voice_engine()
         self.lock = threading.Lock()
@@ -27,7 +30,12 @@ class VoiceAssistant:
                     else:
                         continue
 
-                    if "portuguese" in language.lower():
+                    if "pt" in language.lower() or "portuguese" in language.lower():
+                        self.engine.setProperty('voice', voice.id)
+                        break
+                else:
+                    # Alguns motores de voz não têm o atributo 'languages', então verificamos o 'name'
+                    if "português" in voice.name.lower() or "portuguese" in voice.name.lower():
                         self.engine.setProperty('voice', voice.id)
                         break
             except (IndexError, AttributeError, UnicodeDecodeError):
@@ -35,13 +43,35 @@ class VoiceAssistant:
 
     def listen(self):
         try:
-            with sr.Microphone(device_index=self.microphone_index) as source:
-                audio = self.recognizer.listen(source)
-            text = self.recognizer.recognize_google(audio, language='pt-BR')
-            return text
-        except sr.UnknownValueError:
-            return None
-        except sr.RequestError:
+            # Usar sounddevice para capturar o áudio
+            samplerate = 16000  # Taxa de amostragem padrão
+            duration = 5  # Segundos para gravar (ajuste conforme necessário)
+            print("Ouvindo...")
+            with self.lock:
+                if self.microphone_index is not None:
+                    device_index = int(self.microphone_index)
+                else:
+                    device_index = None  # Dispositivo padrão
+                recording = sd.rec(int(samplerate * duration), samplerate=samplerate, channels=1, dtype='int16', device=device_index)
+                sd.wait()  # Espera a gravação terminar
+
+                audio_data = np.squeeze(recording)
+                audio_bytes = audio_data.tobytes()
+                audio = sr.AudioData(audio_bytes, samplerate, 2)  # 2 bytes por amostra (int16)
+
+            try:
+                text = self.recognizer.recognize_google(audio, language='pt-BR')
+                print(f"Você disse: {text}")
+                return text
+            except sr.UnknownValueError:
+                print("Não entendi o que você disse.")
+                return None
+            except sr.RequestError as e:
+                print(f"Erro ao solicitar resultados do serviço de reconhecimento; {e}")
+                return None
+        except Exception as e:
+            print(f"Erro ao acessar o microfone: {e}")
+            traceback.print_exc()
             return None
 
     def speak(self, text):

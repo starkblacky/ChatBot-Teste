@@ -64,8 +64,7 @@ class VisionAssistant:
                 ret, frame = cap.read()
                 cap.release()
                 if ret and frame is not None and np.sum(frame) > 0:
-                    # Redimensionar a imagem para acelerar o processamento
-                    frame = cv2.resize(frame, (0, 0), fx=0.5, fy=0.5)
+                    # Não reduzir a resolução da imagem
                     return frame
             print("Não foi possível capturar a imagem após múltiplas tentativas")
             return None
@@ -82,7 +81,7 @@ class VisionAssistant:
 
         try:
             # Usando o DeepFace para representar a face com enforce_detection=False
-            result = DeepFace.represent(frame, model_name=self.face_recognition_model, detector_backend='opencv', enforce_detection=False)
+            result = DeepFace.represent(frame, model_name=self.face_recognition_model, detector_backend='mtcnn', enforce_detection=False)
             if result and len(result) > 0:
                 return result[0]['embedding']  # Retorna a representação da primeira face detectada
             else:
@@ -104,7 +103,7 @@ class VisionAssistant:
 
         try:
             # Representa a face atual com enforce_detection=False
-            result = DeepFace.represent(frame, model_name=self.face_recognition_model, detector_backend='opencv', enforce_detection=False)
+            result = DeepFace.represent(frame, model_name=self.face_recognition_model, detector_backend='mtcnn', enforce_detection=False)
             if result and len(result) > 0:
                 captured_embedding = result[0]['embedding']
 
@@ -162,7 +161,7 @@ class VisionAssistant:
         try:
             # Analisar atributos faciais usando DeepFace com enforce_detection=False
             result = DeepFace.analyze(frame, actions=['age', 'gender', 'emotion', 'race'],
-                                      detector_backend='opencv', enforce_detection=False)
+                                      detector_backend='mtcnn', enforce_detection=False)
             # Verificar se há rosto detectado
             if result and isinstance(result, dict) and 'age' in result:
                 return result  # Retorna os resultados da análise
