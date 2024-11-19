@@ -36,6 +36,7 @@ class MainWindow(QMainWindow):
             self.is_listening = False
             self.conversation_thread = None
             self.media_player = None  # Para reprodução de música
+            self.music_mode = False  # Adicionado para controlar o modo música
 
             # Inicializar contexto
             self.context = []
@@ -46,6 +47,20 @@ class MainWindow(QMainWindow):
             self.assistant_name = "Eva"
             self.assistant_age = "1 ano"
             self.assistant_hobbies = ["conversar com pessoas", "aprender coisas novas", "ajudar no que for preciso"]
+
+            # Lista de piadas para contar
+            self.jokes = [
+                "Por que o programador foi ao médico? Porque ele tinha muitos bugs!",
+                "O que o Java disse para o C? Você tem classe!",
+                "Qual é o fim da picada? Quando o mosquito vai embora."
+            ]
+
+            # Lista de elogios
+            self.compliments = [
+                "Você é uma pessoa incrível!",
+                "Seu sorriso é contagiante!",
+                "Você tem um ótimo senso de humor!"
+            ]
 
             # Timer para atualizar a imagem da câmera
             if self.vision_assistant.camera_available:
@@ -122,6 +137,7 @@ class MainWindow(QMainWindow):
             if hasattr(self, 'media_player') and self.media_player is not None:
                 self.media_player.stop()
                 self.media_player = None
+                self.music_mode = False  # Desativar o modo música
 
     def conversation_flow(self):
         GREETING_KEYWORDS = ["oi", "olá", "bom dia", "boa tarde", "boa noite", "e aí", "fala", "salve"]
@@ -131,6 +147,7 @@ class MainWindow(QMainWindow):
         ASSISTANT_NAME_QUERY = ["qual é o seu nome", "como você se chama"]
         ASSISTANT_AGE_QUERY = ["quantos anos você tem", "qual é a sua idade"]
         ASSISTANT_HOBBIES_QUERY = ["quais são seus hobbies", "o que você gosta de fazer", "do que você gosta"]
+        CREATOR_QUERY = ["quem são seus criadores", "quem te criou", "quem fez você"]
 
         USER_EMOTION_QUERY = ["como estou me sentindo", "qual é minha emoção", "como estou", "você sabe minha emoção"]
         USER_AGE_QUERY = ["quantos anos eu tenho", "você sabe minha idade", "qual é minha idade"]
@@ -143,6 +160,9 @@ class MainWindow(QMainWindow):
 
         PLAY_MUSIC_COMMANDS = ["tocar música", "reproduzir música", "colocar música"]
         STOP_MUSIC_COMMANDS = ["parar música", "pausar música", "stop música"]
+
+        JOKE_COMMANDS = ["conte uma piada", "me faça rir", "diga uma piada"]
+        COMPLIMENT_COMMANDS = ["me elogie", "diga algo bom sobre mim", "como estou hoje?"]
 
         # Contexto vazio (não salva mais histórico)
         self.context = []
@@ -161,6 +181,21 @@ class MainWindow(QMainWindow):
             self.update_conversation_label(f"Você: {user_input}")
 
             user_input_lower = user_input.lower()
+
+            # Se estiver no modo música
+            if self.music_mode:
+                if any(keyword in user_input_lower for keyword in STOP_MUSIC_COMMANDS):
+                    response = self.stop_music()
+                else:
+                    return #response = "Estou tocando música. Por favor, diga 'parar música' para interromper a música."
+                self.update_conversation_label(f"Assistente: {response}")
+                # Falar a resposta
+                self.voice_assistant.stop_listening()
+                self.voice_assistant.speak(response)
+                if not self.is_listening:
+                    break  # Sai do loop se is_listening for False
+                self.voice_assistant.start_listening()
+                continue  # Pula para a próxima iteração do loop
 
             try:
                 # Verificar saudação
@@ -193,6 +228,16 @@ class MainWindow(QMainWindow):
                 elif any(keyword in user_input_lower for keyword in ASSISTANT_HOBBIES_QUERY):
                     hobbies_str = ", ".join(self.assistant_hobbies)
                     response = f"Eu gosto de {hobbies_str}."
+                elif any(keyword in user_input_lower for keyword in CREATOR_QUERY):
+                    response = "Fui criada pelos alunos da Escola Estadual Sorama Geralda Richard Xavier do 2º ano."
+
+                # Contar piadas
+                elif any(keyword in user_input_lower for keyword in JOKE_COMMANDS):
+                    response = random.choice(self.jokes)
+
+                # Elogiar o usuário
+                elif any(keyword in user_input_lower for keyword in COMPLIMENT_COMMANDS):
+                    response = random.choice(self.compliments)
 
                 # Perguntas sobre atributos faciais do usuário
                 elif any(keyword in user_input_lower for keyword in USER_EMOTION_QUERY + USER_AGE_QUERY + USER_GENDER_QUERY + USER_RACE_QUERY):
@@ -246,13 +291,16 @@ class MainWindow(QMainWindow):
                     response = self.get_weather_forecast()
 
                 # Comando para tocar música
+
+                    # Comando para tocar música
                 elif any(keyword in user_input_lower for keyword in PLAY_MUSIC_COMMANDS):
                     # Extrair nome da música do input do usuário
-                    song_name = user_input_lower
                     for keyword in PLAY_MUSIC_COMMANDS:
-                        if keyword in song_name:
-                            song_name = song_name.replace(keyword, '').strip()
+                        if keyword in user_input_lower:
+                            song_name = user_input_lower.partition(keyword)[2].strip()
                             break
+                    else:
+                        song_name = ''
                     if song_name:
                         response = self.play_music(song_name)
                     else:
@@ -316,6 +364,7 @@ class MainWindow(QMainWindow):
             traceback.print_exc()
             return "Desculpe, não consegui obter a previsão do tempo."
 
+
     def play_music(self, song_name):
         try:
             # Pesquisar no YouTube
@@ -349,7 +398,9 @@ class MainWindow(QMainWindow):
             media.get_mrl()
             self.media_player.set_media(media)
             self.media_player.play()
-            return f"Tocando {title}."
+
+            self.music_mode = True  # Ativar o modo música
+            return f"Iniciando a reprodução de {title}."
         except Exception as e:
             print(f"Erro ao reproduzir música: {e}")
             traceback.print_exc()
@@ -360,6 +411,7 @@ class MainWindow(QMainWindow):
             if hasattr(self, 'media_player') and self.media_player is not None:
                 self.media_player.stop()
                 self.media_player = None
+                self.music_mode = False  # Desativar o modo música
                 return "Música interrompida."
             else:
                 return "Nenhuma música está sendo reproduzida no momento."
